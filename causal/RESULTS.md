@@ -10,7 +10,7 @@ Outcome: earnings in 1978 (USD). Estimand: effect on the treated (ATT). Interval
 |---|---|---:|---:|---:|---:|
 | experimental | Difference in means | 1 794 | 516 to 3 218 | n/a (same data) |  |
 | experimental | OLS with covariates | 1 671 | 376 to 3 048 | n/a (same data) |  |
-| experimental | Propensity score matching (1 NN) | 2 376 | 60 to 3 556 | n/a (same data) |  |
+| experimental | Propensity score matching (1 NN) | 2 631 | 125 to 3 564 | n/a (same data) |  |
 | experimental | Inverse probability weighting | 1 785 | 549 to 3 226 | n/a (same data) |  |
 | experimental | Doubly robust (AIPW) | 1 768 | 501 to 3 212 | n/a (same data) |  |
 | psid | Difference in means | -15 205 | -16 433 to -13 838 | -16 999 | -17 866 to -16 122 |
@@ -20,7 +20,7 @@ Outcome: earnings in 1978 (USD). Estimand: effect on the treated (ATT). Interval
 | psid | Doubly robust (AIPW) | 2 657 | 933 to 4 340 | 862 | -775 to 2 376 |
 | cps | Difference in means | -8 498 | -9 613 to -7 221 | -10 292 | -10 923 to -9 643 |
 | cps | OLS with covariates | 1 066 | -53 to 2 325 | -728 | -1 616 to 78 |
-| cps | Propensity score matching (1 NN) | 2 006 | -290 to 3 639 | 212 | -2 117 to 1 477 |
+| cps | Propensity score matching (1 NN) | 1 992 | -212 to 3 628 | 198 | -2 084 to 1 454 |
 | cps | Inverse probability weighting | 1 654 | 161 to 3 244 | -140 | -1 304 to 1 065 |
 | cps | Doubly robust (AIPW) | 1 479 | -24 to 2 999 | -315 | -1 598 to 881 |
 
@@ -30,9 +30,9 @@ Outcome: earnings in 1978 (USD). Estimand: effect on the treated (ATT). Interval
 
 | Sample | Treated | Controls | Distinct matched controls | IPW effective n (controls) | Top 5 controls' share of weight | Controls below min treated PS | Treated above max control PS | max abs SMD raw | matched | IPW |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| experimental | 185 | 260 | 106 | 201.4 | 6% | 4% | 1 | 0.30 | 0.16 | 0.03 |
-| psid | 185 | 2490 | 56 | 9.7 | 57% | 58% | 0 | 1.84 | 0.27 | 0.34 |
-| cps | 185 | 15992 | 111 | 89.1 | 19% | 73% | 5 | 2.43 | 0.09 | 0.10 |
+| experimental | 185 | 260 | 145 | 201.4 | 6% | 4% | 1 | 0.30 | 0.16 | 0.03 |
+| psid | 185 | 2490 | 57 | 9.7 | 57% | 58% | 0 | 1.84 | 0.27 | 0.34 |
+| cps | 185 | 15992 | 139 | 89.1 | 19% | 73% | 5 | 2.43 | 0.09 | 0.10 |
 
 ### Covariate balance, NSW treated vs NSW randomised controls (the benchmark)
 
@@ -97,10 +97,10 @@ Same estimators with (a) the propensity score refitted on linear terms only and 
 
 | Sample | Method | Main spec | Linear spec | Trimmed 0.1 to 0.9 | Treated kept | Controls kept |
 |---|---|---:|---:|---:|---:|---:|
-| psid | Propensity score matching (1 NN) | 170 | 2 168 | 776 | 92 | 124 |
+| psid | Propensity score matching (1 NN) | 170 | 2 169 | 776 | 92 | 124 |
 | psid | Inverse probability weighting | 2 766 | 1 759 | -538 | 92 | 124 |
 | psid | Doubly robust (AIPW) | 2 657 | 1 751 | -499 | 92 | 124 |
-| cps | Propensity score matching (1 NN) | 2 006 | 1 756 | 2 468 | 138 | 236 |
+| cps | Propensity score matching (1 NN) | 1 992 | 1 756 | 2 353 | 138 | 236 |
 | cps | Inverse probability weighting | 1 654 | 1 180 | 2 044 | 138 | 236 |
 | cps | Doubly robust (AIPW) | 1 479 | 1 474 | 1 955 | 138 | 236 |
 
@@ -121,8 +121,8 @@ Same estimators with (a) the propensity score refitted on linear terms only and 
 ## Reading
 
 * The naive comparisons are badly wrong: -15 205 USD against PSID and -8 498 USD against CPS, with the wrong sign. The survey controls are older, more often married and earned far more before the programme (largest raw SMD 2.4). The comparison measures who joined, not what training did.
-* Adjusted estimates range from 4 to 2 766 USD. Bias intervals that exclude zero: PSID Difference in means, PSID OLS with covariates, CPS Difference in means. An interval that includes zero is not evidence of no bias: the bias intervals of the adjusted methods are on average 3 013 USD wide, larger than the effect being estimated.
-* On PSID, OLS (4 USD) extrapolates across controls who look nothing like the treated, and 1 nearest neighbour matching (170 USD) rests on a small set of reused controls and moves to 2 168 USD under the linear specification.
+* Adjusted estimates range from 4 to 2 766 USD. Bias intervals that exclude zero: PSID Difference in means, PSID OLS with covariates, CPS Difference in means. An interval that includes zero is not evidence of no bias: the bias intervals of the adjusted methods are on average 3 006 USD wide, larger than the effect being estimated.
+* On PSID, OLS (4 USD) extrapolates across controls who look nothing like the treated, and 1 nearest neighbour matching (170 USD) rests on a small set of reused controls and moves to 2 169 USD under the linear specification.
 * PSID weighting lands near the benchmark in its point estimate, but it fails its own diagnostics: after weighting, max abs SMD is 0.34 (age, education, married, u74, u75 above 0.1), the effective sample is about 10 controls and the 5 largest weights carry 57% of the control weight. Trimmed to scores between 0.1 and 0.9, IPW on PSID gives -538 USD (for the 92 treated kept). A bootstrap over about ten effective controls is not reliable either. The PSID result should be read as not identified by these data.
 * CPS has better overlap and passes the balance rule after weighting; IPW and AIPW there stay between 1 180 and 2 044 USD across the main spec, the linear spec and trimming.
 * Why adjustment gets close at all: plausibly because selection into NSW ran mainly through prior earnings and unemployment, which are observed (Dehejia and Wahba 1999). Smith and Todd (2005) show that this result is sensitive to the Dehejia and Wahba subsample, which conditions on 1974 earnings. This run does not test the mechanism, and without the experiment we could not tell which adjusted estimate to believe.

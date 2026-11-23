@@ -17,7 +17,7 @@ bliver, og dem, der går. Afprøv den i en stratificeret, randomiseret pilot med
   bliver resultatet -15.205 og -8.498 USD: forkert fortegn.
 * Korrigeret for alder, uddannelse og tidligere indkomst ligger estimaterne mellem
   4 og 2.766 USD. Intervallerne er bredere end selve effekten,
-  et andet rimeligt modelvalg flytter et estimat med op til 1.999 USD, og
+  et andet rimeligt modelvalg flytter et estimat med op til 2.000 USD, og
   på PSID giver en afgrænsning til de 92 deltagere med sammenlignelige kontroller
   -538 USD.
 

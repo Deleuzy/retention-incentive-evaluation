@@ -38,11 +38,11 @@ No Forsvaret data, no Danish register data and no real experiment were used.
 |---|---:|---:|
 | Difference in means | -15 205 (-16 433 to -13 838) | -8 498 (-9 613 to -7 221) |
 | OLS with covariates | 4 (-1 481 to 1 613) | 1 066 (-53 to 2 325) |
-| Propensity score matching (1 NN) | 170 (-1 503 to 3 674) | 2 006 (-290 to 3 639) |
+| Propensity score matching (1 NN) | 170 (-1 503 to 3 674) | 1 992 (-212 to 3 628) |
 | Inverse probability weighting | 2 766 (816 to 4 340) | 1 654 (161 to 3 244) |
 | Doubly robust (AIPW) | 2 657 (933 to 4 340) | 1 479 (-24 to 2 999) |
 
-Bias intervals (joint bootstrap of estimate minus benchmark) that exclude zero: PSID Difference in means, PSID OLS with covariates, CPS Difference in means. A propensity score specification change moves an estimate by up to 1 999 USD. PSID weighting fails its balance check after weighting (max abs SMD 0.34), rests on about 10 effective controls, and gives -538 USD once trimmed to scores between 0.1 and 0.9.
+Bias intervals (joint bootstrap of estimate minus benchmark) that exclude zero: PSID Difference in means, PSID OLS with covariates, CPS Difference in means. A propensity score specification change moves an estimate by up to 2 000 USD. PSID weighting fails its balance check after weighting (max abs SMD 0.34), rests on about 10 effective controls, and gives -538 USD once trimmed to scores between 0.1 and 0.9.
 
 **Simulated pilot (not real data).** Baseline retention assumed 80%. Required n for +5 points at 80% power: 1812 (plan uses 1900; simulated power 85.2%, Monte Carlo SE 1.8, 400 pilots). Randomising the 12 units instead: minimum detectable effect 10.3 points at an assumed ICC of 0.02, 7.1 at 0.005.
 

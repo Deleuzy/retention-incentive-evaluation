@@ -178,3 +178,13 @@ def test_r_crosscheck_agrees_with_python():
     assert r["cox_hr_months_0_12_simulated"] == pytest.approx(hr, rel=1e-3)
     ratio = pilot["cox"]["change_at_12"]["ratio_after_vs_before"]
     assert r["cox_change_at_12_ratio_simulated"] == pytest.approx(ratio, rel=1e-3)
+
+
+def test_matching_splits_ties_and_ignores_float_noise():
+    lp = np.array([0.0, 1.0, 1.0 + 1e-12, 3.0])
+    t = np.array([1, 0, 0, 0])
+    w = E.match_weights(lp, t)
+    assert np.allclose(w, [0.0, 0.5, 0.5, 0.0])
+    # Reordering the controls does not change the weights each control gets.
+    perm = np.array([0, 3, 2, 1])
+    assert np.allclose(E.match_weights(lp[perm], t[perm]), w[perm])

@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from scipy import stats
-from sklearn.neighbors import NearestNeighbors
 
 from .data import COVARIATES, OUTCOME
 
@@ -96,11 +95,31 @@ def att_weights(p: np.ndarray, t: np.ndarray) -> np.ndarray:
     return np.where(t == 1, 1.0, p / (1 - p))
 
 
+def match_weights(lp: np.ndarray, t: np.ndarray, decimals: int = 6) -> np.ndarray:
+    """Weights from 1 nearest neighbour matching on the logit score, with replacement.
+
+    Each treated unit is matched to its nearest control; if several controls are equally
+    near, it is matched to all of them with equal shares (Abadie and Imbens 2006). Scores
+    are rounded first, because units with identical covariates get scores that differ only
+    by floating point noise, which varies between platforms. Returns a weight for every
+    unit: 0 for treated, and for each control the number of treated units it stands in for.
+    """
+    r = np.round(lp, decimals)
+    co_idx = np.flatnonzero(t == 0)
+    rc = r[co_idx]
+    w = np.zeros(len(t))
+    for v in r[t == 1]:
+        d = np.abs(rc - v)
+        hit = co_idx[d == d.min()]
+        w[hit] += 1.0 / hit.size
+    return w
+
+
 @dataclass
 class Fit:
     estimates: dict[str, float]
     ps: np.ndarray
-    match_idx: np.ndarray  # index (into df) of the matched control for each treated unit
+    match_w: np.ndarray  # matching weight of each control (number of treated it stands in for)
     weights: np.ndarray
 
 
@@ -120,11 +139,8 @@ def estimate_all(df: pd.DataFrame, spec: str = "dw") -> Fit:
     lp = np.log(p / (1 - p))
 
     # 1 nearest neighbour matching on the logit propensity score, with replacement.
-    co_idx = np.flatnonzero(co)
-    nn = NearestNeighbors(n_neighbors=1).fit(lp[co_idx, None])
-    _, j = nn.kneighbors(lp[tr, None])
-    match_idx = co_idx[j[:, 0]]
-    est["psm"] = (y[tr] - y[match_idx]).mean()
+    mw = match_weights(lp, t)
+    est["psm"] = y[tr].mean() - (mw * y).sum() / tr.sum()
 
     w = att_weights(p, t)
     wc = w[co] / w[co].sum()
@@ -136,7 +152,7 @@ def estimate_all(df: pd.DataFrame, spec: str = "dw") -> Fit:
     res = y - m0
     est["aipw"] = res[tr].mean() - (wc * res[co]).sum()
 
-    return Fit({k: float(v) for k, v in est.items()}, p, match_idx, w)
+    return Fit({k: float(v) for k, v in est.items()}, p, mw, w)
 
 
 def bootstrap(df: pd.DataFrame, reps: int, seed: int) -> pd.DataFrame:

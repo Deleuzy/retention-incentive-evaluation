@@ -63,13 +63,13 @@ def run(reps: int = 500, seed: int = 20261201, out: Path = OUT) -> dict:
         fit = fits[s]
         t = df["treat"].to_numpy() == 1
         sd_raw = E.pooled_sd(df, BALANCE_COLS)
-        matched = pd.concat([df[t], df.loc[fit.match_idx]], ignore_index=True)
+
         bal = pd.DataFrame(
             {
                 "mean_treated": df.loc[t, BALANCE_COLS].mean(),
                 "mean_control": df.loc[~t, BALANCE_COLS].mean(),
                 "smd_raw": E.smd(df, BALANCE_COLS),
-                "smd_matched": E.smd(matched, BALANCE_COLS, sd_ref=sd_raw),
+                "smd_matched": E.smd(df, BALANCE_COLS, fit.match_w, sd_ref=sd_raw),
                 "smd_ipw": E.smd(df, BALANCE_COLS, fit.weights, sd_ref=sd_raw),
             }
         )
@@ -77,7 +77,7 @@ def run(reps: int = 500, seed: int = 20261201, out: Path = OUT) -> dict:
         diagnostics[s] = {
             "n_treated": int(t.sum()),
             "n_control": int((~t).sum()),
-            "distinct_matched_controls": int(len(set(fit.match_idx.tolist()))),
+            "distinct_matched_controls": int((fit.match_w > 0).sum()),
             "ipw_effective_n_controls": E.effective_n(fit.weights[~t]),
             "ipw_top5_control_weight_share": E.top_weight_share(fit.weights[~t], 5),
             "share_controls_below_min_treated_ps": float((fit.ps[~t] < fit.ps[t].min()).mean()),

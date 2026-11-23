@@ -11,7 +11,7 @@
     "experimental": {
       "n_treated": 185,
       "n_control": 260,
-      "distinct_matched_controls": 106,
+      "distinct_matched_controls": 145,
       "ipw_effective_n_controls": 201.4331720675074,
       "ipw_top5_control_weight_share": 0.06155910828626798,
       "share_controls_below_min_treated_ps": 0.04230769230769231,
@@ -24,7 +24,7 @@
     "psid": {
       "n_treated": 185,
       "n_control": 2490,
-      "distinct_matched_controls": 56,
+      "distinct_matched_controls": 57,
       "ipw_effective_n_controls": 9.662340566440529,
       "ipw_top5_control_weight_share": 0.569921351875344,
       "share_controls_below_min_treated_ps": 0.5823293172690763,
@@ -43,7 +43,7 @@
     "cps": {
       "n_treated": 185,
       "n_control": 15992,
-      "distinct_matched_controls": 111,
+      "distinct_matched_controls": 139,
       "ipw_effective_n_controls": 89.07376363330262,
       "ipw_top5_control_weight_share": 0.1916041360476016,
       "share_controls_below_min_treated_ps": 0.7329289644822411,
