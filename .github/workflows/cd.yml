@@ -54,7 +54,7 @@ jobs:
           uv build
           zip -r "dist/results-${GITHUB_SHA::7}.zip" causal design brief r/r_crosscheck.json README.md
           cp site/brief/beslutningsoplaeg.pdf dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
