@@ -65,27 +65,41 @@ def row(est: pd.DataFrame, sample: str, method: str) -> pd.Series:
 
 def facts(d: dict) -> dict:
     """Derived numbers used by more than one document."""
-    est, s = d["est"], d["summary"]
+    est, s, sens = d["est"], d["summary"], d["sens"]
     f = {"bench": s["benchmark"], "bench_ci": row(est, "experimental", "diff_means")}
     adj = est[est["sample"].isin(OBS) & est["method"].isin(ADJ)]
     ps = est[est["sample"].isin(OBS) & est["method"].isin(("psm", "ipw", "aipw"))]
     f["adj_min"], f["adj_max"] = adj["estimate"].min(), adj["estimate"].max()
     f["ps_min"], f["ps_max"] = ps["estimate"].min(), ps["estimate"].max()
-    f["ps_all_cover"] = bool(ps["ci_covers_benchmark"].all())
     f["ps_width_mean"] = float((ps["ci_high"] - ps["ci_low"]).mean())
-    f["bench_width"] = float(f["bench_ci"]["ci_high"] - f["bench_ci"]["ci_low"])
-    f["excluding"] = est[~est["ci_covers_benchmark"]][["sample", "method"]].values.tolist()
-    sens = d["sens"]
+    f["bias_width_mean"] = float((adj["bias_ci_high"] - adj["bias_ci_low"]).mean())
+    f["bias_excl"] = est[est["bias_ci_excludes_zero"].astype(bool)][
+        ["sample", "method"]
+    ].values.tolist()
     f["spec_shift_max"] = float((sens["dw_spec"] - sens["linear_spec"]).abs().max())
     sp = sens.set_index(["sample", "method"])
+    f["sp"] = sp
     f["psm_psid"] = sp.loc[("psid", "psm"), "dw_spec"]
     f["psm_psid_linear"] = sp.loc[("psid", "psm"), "linear_spec"]
+    f["trim_psid_ipw"] = sp.loc[("psid", "ipw"), "trimmed_0.1_0.9"]
+    f["trim_psid_n_t"] = int(sp.loc[("psid", "ipw"), "trimmed_n_treated"])
+    cps_w = sens[(sens["sample"] == "cps") & sens["method"].isin(("ipw", "aipw"))]
+    vals = cps_w[["dw_spec", "linear_spec", "trimmed_0.1_0.9"]].to_numpy()
+    f["cps_w_min"], f["cps_w_max"] = float(vals.min()), float(vals.max())
     f["naive"] = {o: row(est, o, "diff_means")["estimate"] for o in OBS}
     f["ols"] = {o: row(est, o, "ols") for o in OBS}
     diag = s["diagnostics"]
+    f["diag"] = diag
     f["ess_psid"] = diag["psid"]["ipw_effective_n_controls"]
+    f["top5_psid"] = diag["psid"]["ipw_top5_control_weight_share"]
+    f["smd_ipw_psid"] = diag["psid"]["max_abs_smd_ipw"]
+    f["smd_ipw_psid_covs"] = diag["psid"]["covariates_smd_ipw_above_0.1"]
     f["smd_raw_max"] = max(diag[o]["max_abs_smd_raw"] for o in OBS)
     return f
+
+
+def name(sample: str, method: str) -> str:
+    return f"{sample.upper()} {METHODS[method]}"
 
 
 # ------------------------------------------------------------------ causal/RESULTS.md
@@ -100,33 +114,44 @@ def causal_md(d: dict) -> str:
         "`causal/summary.json`. Do not edit by hand.",
         "",
         f"Outcome: earnings in 1978 (USD). Estimand: effect on the treated (ATT). "
-        f"Intervals: 95% percentile bootstrap, {s['bootstrap_reps']} resamples drawn "
-        f"separately within treated and controls, seed {s['seed']}.",
+        f"Intervals: 95% percentile bootstrap, {s['bootstrap_reps']} resamples, seed "
+        f"{s['seed']}. The bootstrap is joint: each resample draws the 185 NSW treated once "
+        "and uses that draw in all three samples, with each control group drawn separately. "
+        "That keeps the dependence between an observational estimate and the benchmark, so "
+        "the interval for the bias (estimate minus benchmark) accounts for the uncertainty "
+        "in the benchmark too.",
         "",
         f"**Experimental benchmark: {usd(f['bench'])} USD** "
         f"(bootstrap CI {usd(f['bench_ci']['ci_low'])} to {usd(f['bench_ci']['ci_high'])}; "
         f"Welch t CI {usd(s['benchmark_welch_ci'][0])} to {usd(s['benchmark_welch_ci'][1])}).",
         "",
-        "| Sample | Method | Estimate | 95% CI | Bias vs benchmark | CI covers benchmark |",
-        "|---|---|---:|---:|---:|:---:|",
+        "| Sample | Method | Estimate | 95% CI | Bias vs benchmark | 95% CI of bias |",
+        "|---|---|---:|---:|---:|---:|",
     ]
     for _, r in est.iterrows():
+        if r["sample"] == "experimental":
+            bias, bci = "n/a (same data)", ""
+        else:
+            bias = usd(r["bias_vs_benchmark"])
+            bci = f"{usd(r['bias_ci_low'])} to {usd(r['bias_ci_high'])}"
         lines.append(
             f"| {r['sample']} | {METHODS[r['method']]} | {usd(r['estimate'])} | "
-            f"{usd(r['ci_low'])} to {usd(r['ci_high'])} | {usd(r['bias_vs_benchmark'])} | "
-            f"{'yes' if r['ci_covers_benchmark'] else 'no'} |"
+            f"{usd(r['ci_low'])} to {usd(r['ci_high'])} | {bias} | {bci} |"
         )
     lines += ["", "![estimates](estimates_vs_benchmark.png)", "", "## Diagnostics", ""]
     lines += [
         "| Sample | Treated | Controls | Distinct matched controls | IPW effective n "
-        "(controls) | Controls below min treated PS | max abs SMD raw | matched | IPW |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "(controls) | Top 5 controls' share of weight | Controls below min treated PS | "
+        "Treated above max control PS | max abs SMD raw | matched | IPW |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for smp, g in s["diagnostics"].items():
         lines.append(
             f"| {smp} | {g['n_treated']} | {g['n_control']} | "
             f"{g['distinct_matched_controls']} | {g['ipw_effective_n_controls']:.1f} | "
+            f"{100 * g['ipw_top5_control_weight_share']:.0f}% | "
             f"{100 * g['share_controls_below_min_treated_ps']:.0f}% | "
+            f"{g['n_treated_above_max_control_ps']} | "
             f"{g['max_abs_smd_raw']:.2f} | {g['max_abs_smd_matched']:.2f} | "
             f"{g['max_abs_smd_ipw']:.2f} |"
         )
@@ -136,8 +161,9 @@ def causal_md(d: dict) -> str:
             "",
             f"### Covariate balance, {SAMPLES[smp]}",
             "",
-            "Standardised mean difference (treated minus controls, pooled SD). "
-            "Values above 0.1 in absolute size are usually read as imbalance.",
+            "Standardised mean difference, treated minus controls. All three columns divide "
+            "by the same pooled SD of the unmatched sample (Austin 2009). Absolute values "
+            "above 0.1 are usually read as imbalance.",
             "",
             "| Covariate | Mean treated | Mean controls | SMD raw | SMD matched | SMD IPW |",
             "|---|---:|---:|---:|---:|---:|",
@@ -150,76 +176,95 @@ def causal_md(d: dict) -> str:
         lines += ["", f"![overlap {smp}](overlap_{smp}.png)"]
     lines += [
         "",
-        "## Propensity score specification sensitivity",
+        "## Sensitivity",
         "",
-        "Same estimators, propensity score refitted with linear terms only.",
+        "Same estimators with (a) the propensity score refitted on linear terms only and "
+        "(b) the sample trimmed to estimated propensity scores between 0.1 and 0.9 (Crump et "
+        "al. 2009). Trimming changes the estimand: the effect is then for the treated people "
+        "who have comparable controls, not for all 185.",
         "",
-        "| Sample | Method | Dehejia Wahba style spec | Linear spec | Shift |",
-        "|---|---|---:|---:|---:|",
+        "| Sample | Method | Main spec | Linear spec | Trimmed 0.1 to 0.9 | Treated kept | "
+        "Controls kept |",
+        "|---|---|---:|---:|---:|---:|---:|",
     ]
     for _, r in d["sens"].iterrows():
         lines.append(
             f"| {r['sample']} | {METHODS[r['method']]} | {usd(r['dw_spec'])} | "
-            f"{usd(r['linear_spec'])} | {usd(r['linear_spec'] - r['dw_spec'])} |"
+            f"{usd(r['linear_spec'])} | {usd(r['trimmed_0.1_0.9'])} | "
+            f"{int(r['trimmed_n_treated'])} | {int(r['trimmed_n_control'])} |"
         )
     if d["r"]:
         lines += ["", "## Cross-check in R", "", r_table(d)]
-    lines += ["", "## Reading", "", reading_en(d, f), ""]
+    lines += ["", "## Reading", "", reading_en(f), ""]
     return "\n".join(lines)
 
 
 def r_table(d: dict) -> str:
-    r, est = d["r"], d["est"]
-    pil = d["pilot"]["cox"]["months_0_12"]["hazard_ratio"]
+    r, est, cox = d["r"], d["est"], d["pilot"]["cox"]
     rows = [
         ("Experimental benchmark (USD)", d["summary"]["benchmark"], r["benchmark"]),
         ("Welch CI lower (USD)", d["summary"]["benchmark_welch_ci"][0], r["benchmark_welch_ci"][0]),
         ("Welch CI upper (USD)", d["summary"]["benchmark_welch_ci"][1], r["benchmark_welch_ci"][1]),
         ("IPW ATT, PSID (USD)", row(est, "psid", "ipw")["estimate"], r["ipw_psid"]),
         ("IPW ATT, CPS (USD)", row(est, "cps", "ipw")["estimate"], r["ipw_cps"]),
-        ("Cox HR months 0 to 12, simulated pilot", pil, r["cox_hr_months_0_12_simulated"]),
+        (
+            "Cox HR months 0 to 12, simulated pilot",
+            cox["months_0_12"]["hazard_ratio"],
+            r["cox_hr_months_0_12_simulated"],
+        ),
+        (
+            "Cox change in HR at month 12, simulated pilot",
+            cox["change_at_12"]["ratio_after_vs_before"],
+            r["cox_change_at_12_ratio_simulated"],
+        ),
     ]
     out = [
-        f"`r/crosscheck.R` ({r['r_version']}, base `glm`, `t.test`, `survival::coxph`) "
-        "reads the raw Stata files itself.",
+        f"`r/crosscheck.R` ({r['r_version']}; `t.test`, `glm`, `survival::coxph`, "
+        "`survival::survSplit`) reads the raw Stata files itself.",
         "",
         "| Quantity | Python | R |",
         "|---|---:|---:|",
     ]
-    for name, py, rv in rows:
-        out.append(f"| {name} | {py:,.3f} | {rv:,.3f} |")
+    for label, py, rv in rows:
+        dp = 2 if abs(py) > 100 else 4
+        out.append(f"| {label} | {py:,.{dp}f} | {rv:,.{dp}f} |")
     return "\n".join(out)
 
 
-def reading_en(d: dict, f: dict) -> str:
-    excl = ", ".join(f"{s} {METHODS[m]}" for s, m in f["excluding"])
+def reading_en(f: dict) -> str:
+    excl = ", ".join(name(s, m) for s, m in f["bias_excl"]) or "none"
+    covs = ", ".join(f["smd_ipw_psid_covs"])
     return (
         f"* The naive comparisons are badly wrong: {usd(f['naive']['psid'])} USD against PSID "
         f"and {usd(f['naive']['cps'])} USD against CPS, with the wrong sign. The survey controls "
-        f"are older, more often married and earned far more before the programme "
-        f"(largest raw SMD {f['smd_raw_max']:.1f}). The comparison measures who joined, not "
-        "what training did.\n"
-        f"* Once prior earnings and demographics are adjusted for, the estimates move to "
-        f"{usd(f['adj_min'])} to {usd(f['adj_max'])} USD. OLS on PSID "
-        f"({usd(f['ols']['psid']['estimate'])} USD) still misses: a linear outcome model "
-        "extrapolates across controls who look nothing like the treated. 1 nearest neighbour "
-        f"matching on PSID ({usd(f['psm_psid'])} USD) also misses and moves to "
+        f"are older, more often married and earned far more before the programme (largest raw "
+        "SMD "
+        f"{f['smd_raw_max']:.1f}). The comparison measures who joined, not what training did.\n"
+        f"* Adjusted estimates range from {usd(f['adj_min'])} to {usd(f['adj_max'])} USD. "
+        f"Bias intervals that exclude zero: {excl}. An interval that includes zero is not "
+        f"evidence of no bias: the bias intervals of the adjusted methods are on average "
+        f"{usd(f['bias_width_mean'])} USD wide, larger than the effect being estimated.\n"
+        f"* On PSID, OLS ({usd(f['ols']['psid']['estimate'])} USD) extrapolates across controls "
+        "who look nothing like the treated, and 1 nearest neighbour matching "
+        f"({usd(f['psm_psid'])} USD) rests on a small set of reused controls and moves to "
         f"{usd(f['psm_psid_linear'])} USD under the linear specification.\n"
-        f"* Propensity score methods land between {usd(f['ps_min'])} and {usd(f['ps_max'])} "
-        f"USD{' and every one of their intervals covers the benchmark' if f['ps_all_cover'] else ''}"
-        f". That is weaker evidence than it sounds: their intervals are on average "
-        f"{usd(f['ps_width_mean'])} USD wide, wider than the effect itself.\n"
-        f"* Intervals that exclude the benchmark: {excl}.\n"
-        f"* The results are fragile. Changing only the propensity score specification moves an "
-        f"estimate by up to {usd(f['spec_shift_max'])} USD. On PSID, IPW rests on an effective "
-        f"sample of about {f['ess_psid']:.0f} controls and 1 nearest neighbour matching reuses "
-        "a small set of controls.\n"
-        "* Why the adjusted methods get close here: selection into NSW ran mostly through "
-        "observed prior earnings and employment, which are in the data. Nothing guarantees that "
-        "in another setting, and without the experiment we could not tell which of these "
-        "estimates to believe.\n"
-        "* The matching interval uses the naive bootstrap, which Abadie and Imbens (2008) show "
-        "is not valid for nearest neighbour matching. Treat it as indicative."
+        f"* PSID weighting lands near the benchmark in its point estimate, but it fails its own "
+        f"diagnostics: after weighting, max abs SMD is {f['smd_ipw_psid']:.2f} ({covs} above "
+        f"0.1), the effective sample is about {f['ess_psid']:.0f} controls and the 5 largest "
+        f"weights carry {100 * f['top5_psid']:.0f}% of the control weight. Trimmed to scores "
+        f"between 0.1 and 0.9, IPW on PSID gives {usd(f['trim_psid_ipw'])} USD (for the "
+        f"{f['trim_psid_n_t']} treated kept). A bootstrap over about ten effective controls is "
+        "not reliable either. The PSID result should be read as not identified by these data.\n"
+        f"* CPS has better overlap and passes the balance rule after weighting; IPW and AIPW "
+        f"there stay between {usd(f['cps_w_min'])} and {usd(f['cps_w_max'])} USD across the "
+        "main spec, the linear spec and trimming.\n"
+        "* Why adjustment gets close at all: plausibly because selection into NSW ran mainly "
+        "through prior earnings and unemployment, which are observed (Dehejia and Wahba 1999). "
+        "Smith and Todd (2005) show that this result is sensitive to the Dehejia and Wahba "
+        "subsample, which conditions on 1974 earnings. This run does not test the mechanism, "
+        "and without the experiment we could not tell which adjusted estimate to believe.\n"
+        "* The matching intervals use the naive bootstrap, which Abadie and Imbens (2008) show "
+        "is not valid for nearest neighbour matching. Treat them as indicative."
     )
 
 
@@ -229,11 +274,25 @@ def reading_en(d: dict, f: dict) -> str:
 def pap_md(d: dict) -> str:
     p = d["pilot"]
     a = p["assumptions"]
-    pr, se, cx = p["primary"], p["side_effect_m13_15"], p["cox"]
+    pr, hm, cx, oc = p["primary"], p["harm_m13_15"], p["cox"], p["operating_characteristics"]
+    ret, ch, cost = p["retention"], cx["change_at_12"], p["cost"]
     lo, hi = a["post_payment_months"]
+    iccs = [0.0, *a["icc_sensitivity"]]
+    head = " | ".join(f"Cluster, ICC {i}" for i in iccs)
     power_rows = "\n".join(
-        f"| {int(r.n_total)} | {r.mde_individual_pp:.1f} | {r.mde_cluster_pp:.1f} |"
-        for r in d["power"].itertuples()
+        f"| {int(r['n_total'])} | {r['mde_individual_pp']:.1f} | "
+        + " | ".join(f"{r[f'mde_cluster_icc_{i}_pp']:.1f}" for i in iccs)
+        + " |"
+        for _, r in d["power"].iterrows()
+    )
+    mc = p["mde_cluster_at_pilot_n_pp"]
+    rule = p["decision_rule"]
+    give = p["giveback_share"]
+    cpm = cost["simulated_cost_per_extra_person_month_24m_dkk"]
+    verdict = (
+        "would allow scaling up"
+        if rule["primary_lower_ci_above_zero"] and rule["giveback_share_below_max"]
+        else "would stop a scale up"
     )
     return f"""# Pre-analysis plan: retention bonus pilot (HYPOTHETICAL)
 
@@ -241,9 +300,10 @@ Generated by `python -m rie.report` from `design/pilot_results.json` and
 `design/power_table.csv`. Do not edit by hand.
 
 > **Everything in this plan is hypothetical.** No real pilot has been run. The staff group,
-> baseline retention, bonus size and effect size are planning assumptions chosen for
-> illustration. Section 9 runs the planned analysis on **simulated data** to show that the
-> code works; those numbers say nothing about how a real bonus would perform.
+> baseline retention, bonus size, effect size and intra unit correlation are planning
+> assumptions chosen for illustration. Section 9 runs the planned analysis on **simulated
+> data** to show that the code works; those numbers say nothing about how a real bonus
+> would perform.
 
 ## 1. Question and hypotheses
 
@@ -251,8 +311,8 @@ Does a one-off retention bonus, paid after 12 months of continued service, raise
 a critical staff group still employed 12 months after the offer?
 
 * H1 (primary): the bonus raises 12 month retention.
-* H2 (harm): the bonus delays exits rather than preventing them, visible as more exits right
-  after payment (months {lo} to {hi}) and a smaller gap at 24 months.
+* H2 (harm): the bonus delays exits rather than preventing them, so part of the 12 month gain
+  is lost again right after payment (months {lo} to {hi}).
 * H3 (exploratory): the effect differs by tenure band.
 
 ## 2. Population and intervention
@@ -267,100 +327,136 @@ a critical staff group still employed 12 months after the offer?
 
 * Unit of randomisation: the individual, 1:1, stratified by unit x tenure band
   ({p["n_strata"]} strata), with a fixed, logged seed.
-* Why not randomise whole units: with {a["n_units"]} units and an assumed intra unit
-  correlation of {a["icc"]}, a cluster design with the same {p["n_pilot"]} people could only
-  detect about {p["mde_cluster_at_pilot_n_pp"]:.1f} percentage points (table below).
+* Why not randomise whole units: with {a["n_units"]} units, the same {p["n_pilot"]} people and
+  an assumed intra unit correlation (ICC) of {a["icc"]}, a cluster design could only detect
+  about {mc[str(a["icc"])]:.1f} percentage points ({mc["0.005"]:.1f} at ICC 0.005). The ICC
+  for retention in the real staff group is unknown and should be estimated from past HR
+  records before the design is fixed.
 * Cost of individual randomisation: colleagues in the same unit get different offers. This
   is the main fairness risk (section 7) and must be accepted explicitly before launch.
 
 ## 4. Outcomes
 
-* Primary: still employed 12 months after randomisation (yes or no), from HR records.
-* Secondary: time to exit over 24 months; still employed at 24 months.
-* Harm: exit in months {lo} to {hi} among those still employed at month 12; survey measure of
-  intrinsic motivation and perceived fairness at months 0 and 12.
+All outcomes are measured on everyone randomised, from HR records, so every comparison stays
+randomised.
+
+* Primary: still employed 12 months after randomisation (yes or no).
+* Harm (pre-specified): left in months {lo} to {hi}. Over everyone randomised this equals the
+  drop in retention from month 12 to month {hi}, so its treatment effect is the part of the
+  12 month gain that is lost again right after payment.
+* Secondary: still employed at months {hi} and 24; restricted mean months employed over 24
+  months (RMST); time to exit.
+* Survey (secondary): intrinsic motivation and perceived fairness at months 0 and 12.
 
 ## 5. Sample size and power
 
 Assumed control retention {100 * a["baseline_retention_12m"]:.0f}%, two sided alpha
 {a["alpha"]}, power {a["power"]}. To detect +{100 * a["target_effect_pp"]:.0f} percentage
 points the pilot needs **{p["n_required_for_target"]} people**; the plan uses
-{p["n_pilot"]}, which gives a minimum detectable effect of
-{p["mde_at_pilot_n_pp"]:.1f} points. A simulation of {p["power_reps"]} pilots of that size
-under the assumed effect rejected the null in {100 * p["simulated_power_at_pilot_n"]:.0f}% of
-runs.
+{p["n_pilot"]}, which gives a minimum detectable effect of {p["mde_at_pilot_n_pp"]:.1f}
+points. In {oc["reps"]} simulated pilots of that size (section 9 model), the primary test
+rejected in {100 * oc["primary_power"]:.1f}% (Monte Carlo SE {100 * oc["primary_power_mc_se"]:.1f}),
+the harm test detected the built-in spike in {100 * oc["harm_power"]:.1f}%
+(SE {100 * oc["harm_power_mc_se"]:.1f}) and rejected in
+{100 * oc["harm_rejections_without_spike"]:.1f}% (SE
+{100 * oc["harm_rejections_without_spike_mc_se"]:.1f}) of pilots without a spike.
 
-| Total n | MDE, individual randomisation (pp) | MDE, {a["n_units"]} clusters, ICC {a["icc"]} (pp) |
-|---:|---:|---:|
+Minimum detectable effect in percentage points:
+
+| Total n | Individual | {head} |
+|---:|---:|{"---:|" * len(iccs)}
 {power_rows}
 
-The individual MDE inverts the sample size formula (pooled null variance). The cluster MDE
-inflates the control variance by the design effect and uses t quantiles with clusters minus 2
-degrees of freedom.
+Both MDEs invert the same sample size formula (pooled null variance). The cluster version
+uses the effective sample size n / design effect and t quantiles on clusters minus 2 degrees
+of freedom, and assumes equal unit sizes; unequal units make it worse. Even at ICC 0 the
+cluster design loses power through the t quantiles. The simulation used in section 9 implies
+an ICC of about {p["implied_icc_in_simulation"]:.3f}, below the planning value, so the
+planning value is deliberately cautious.
 
 ## 6. Analysis
 
 * Primary: linear probability model of 12 month retention on treatment with stratum fixed
   effects, HC2 robust standard errors. Report the estimate in percentage points with its 95%
   interval, whatever its sign or p value.
-* Secondary: Kaplan-Meier curves by arm; Cox model stratified by randomisation stratum,
-  fitted separately for months 0 to 12 and months 13 to 24 (the payment date is a planned
-  break in the hazard), plus a proportional hazards test on the full period.
-* Harm: the H2 model above, same specification, among staff still employed at month 12.
+* Harm: the same model for leaving in months {lo} to {hi}, over everyone randomised.
+  Giveback share = harm effect / primary effect.
+* Descriptive only: exit rate in months {lo} to {hi} among staff still employed at month 12.
+  It is not a randomised comparison, because the bonus changes who is still employed.
+* Survival: Kaplan-Meier curves by arm; RMST over 24 months by arm; Cox model stratified by
+  randomisation stratum for months 0 to 12; and a Cox model with the records split at the
+  payment date (treat and treat x after month 12) to estimate the change in the hazard ratio
+  at month 12. Hazard ratios after month 12 compare survivors, who are no longer randomised
+  groups (Hernan 2010), so the Cox change test supports the harm check and does not replace
+  it.
 * Heterogeneity: treatment x tenure band only. Labelled exploratory.
-* Missing data: HR records cover everyone; survey non-response is reported by arm.
 * No covariates beyond the strata are added after seeing the data.
 
 ## 7. Risks of unintended effects
 
 | Risk | How it would show | Mitigation in the design |
 |---|---|---|
-| Timing: exits postponed, not prevented | spike in months {lo} to {
-        hi
-    }; gap shrinks by month 24 | follow up to 24 months; harm outcome pre-specified |
+| Timing: exits postponed, not prevented | harm effect; gap shrinks by months {hi} and 24 | follow up to 24 months; harm outcome and threshold pre-specified |
 | Crowding out intrinsic motivation | lower motivation score in the bonus arm | survey at 0 and 12 months |
-| Fairness and resentment among controls | lower satisfaction or more exits among controls than before the pilot | waitlist promise; compare control exits with prior years |
-| Spillover within units | control outcomes move with share treated in the unit | report control retention by unit share treated |
-| Deadweight | most bonuses go to staff who would have stayed | cost per extra retained person reported next to the effect |
+| Fairness and resentment among controls | lower satisfaction, or more exits among controls than in prior years | waitlist promise; compare control exits with prior years |
+| Spillover within units | control outcomes move with the share treated in the unit | report control retention by unit share treated |
+| Deadweight | most bonuses go to staff who would have stayed | cost per extra person-month of service reported next to the effect |
 
 ## 8. Decision rule and follow-up
 
-* Scale up only if the lower end of the 95% interval for the primary effect is above zero,
-  the harm check shows no clear post-payment spike, and the cost per extra retained person is
-  below the cost of replacing one, which must be estimated separately before the pilot ends.
-* Follow-up schedule: month 0 (randomisation, baseline survey), month 6 (data quality check,
-  no effect estimates), month 12 (primary analysis and short decision brief), month 15 (harm
-  check), month 24 (durability and final brief).
+Scale up only if all three hold:
+
+1. the lower end of the 95% interval for the primary effect is above zero;
+2. the giveback share is at most {100 * a["max_giveback_share"]:.0f}% (point estimates);
+3. the bonus cost per extra person-month of service over 24 months (from the RMST
+   difference) is below the monthly cost of an unfilled post, which must be estimated
+   separately before month 12.
+
+Follow-up schedule: month 0 (randomisation, baseline survey), month 6 (data quality check,
+no effect estimates), month 12 (primary analysis and short decision brief), month {hi} (harm
+check), month 24 (durability, cost per person-month and final brief).
 
 ## 9. Demonstration on SIMULATED data
 
 The simulation draws {p["n_pilot"]} staff, assigns them with the stratified procedure above,
 and generates monthly exits with a baseline monthly hazard of
-{p["truth"]["baseline_monthly_hazard"]:.4f}, a hazard ratio of
+{p["truth"]["baseline_monthly_hazard"]:.4f}, unit effects, unobserved individual differences
+(lognormal frailty, SD {a["frailty_sd"]}), a hazard ratio of
 {p["truth"]["hazard_ratio_months_1_12"]:.2f} under the bonus in months 1 to 12 (calibrated to
 +{p["truth"]["true_effect_retention_12m_pp"]:.0f} points of 12 month retention) and a hazard
 ratio of {p["truth"]["hazard_ratio_months_13_15"]:.1f} in months {lo} to {hi}. The analysis
-does not know these values.
+does not know these values. Results from one simulated pilot:
 
 * Primary: {pr["effect_pp"]:.1f} points (95% CI {pr["ci_low_pp"]:.1f} to
-  {pr["ci_high_pp"]:.1f}); retention {100 * pr["retention_control"]:.1f}% control,
-  {100 * pr["retention_treated"]:.1f}% bonus. True value {
-        p["truth"]["true_effect_retention_12m_pp"]:.0f} points.
-* Harm: exits in months {lo} to {hi} among stayers {100 * se["rate_control"]:.1f}% control,
-  {100 * se["rate_treated"]:.1f}% bonus, difference {se["effect_pp"]:.1f} points
-  (95% CI {se["ci_low_pp"]:.1f} to {se["ci_high_pp"]:.1f}).
-* Retention at 24 months: {100 * p["retention_24m"]["control"]:.1f}% control,
-  {100 * p["retention_24m"]["treated"]:.1f}% bonus ({p["retention_24m"]["diff_pp"]:.1f}
-  points).
-* Cox hazard ratio months 0 to 12: {cx["months_0_12"]["hazard_ratio"]:.2f}
-  ({cx["months_0_12"]["ci_low"]:.2f} to {cx["months_0_12"]["ci_high"]:.2f}); months 13 to 24:
-  {cx["months_13_24"]["hazard_ratio"]:.2f} ({cx["months_13_24"]["ci_low"]:.2f} to
-  {cx["months_13_24"]["ci_high"]:.2f}); full period {cx["months_0_24"]["hazard_ratio"]:.2f}
-  ({cx["months_0_24"]["ci_low"]:.2f} to {cx["months_0_24"]["ci_high"]:.2f}).
-* The proportional hazards test on the full period gives p =
-  {cx["months_0_24"]["ph_test_p"]:.2f}, so it does not flag the reversal that is built into
-  the simulation. The pre-specified split at month 12 does. A single pooled hazard ratio would
-  have hidden the timing effect.
+  {pr["ci_high_pp"]:.1f}); retention {100 * pr["mean_control"]:.1f}% control,
+  {100 * pr["mean_treated"]:.1f}% bonus. True value
+  {p["truth"]["true_effect_retention_12m_pp"]:.0f} points.
+* Harm: leaving in months {lo} to {hi}, {100 * hm["mean_control"]:.1f}% control and
+  {100 * hm["mean_treated"]:.1f}% bonus, difference {hm["effect_pp"]:.1f} points (95% CI
+  {hm["ci_low_pp"]:.1f} to {hm["ci_high_pp"]:.1f}). Giveback share {100 * give:.0f}%.
+* Retention gap at month {hi}: {ret["15m"]["effect_pp"]:.1f} points
+  ({ret["15m"]["ci_low_pp"]:.1f} to {ret["15m"]["ci_high_pp"]:.1f}); at month 24:
+  {ret["24m"]["effect_pp"]:.1f} points ({ret["24m"]["ci_low_pp"]:.1f} to
+  {ret["24m"]["ci_high_pp"]:.1f}).
+* RMST over 24 months: {p["survival"]["rmst_24m_months"]["control"]:.2f} months control,
+  {p["survival"]["rmst_24m_months"]["bonus"]:.2f} bonus, so
+  {p["survival"]["rmst_diff_months"]:.2f} extra months per person offered the bonus, at about
+  {usd(cpm) if cpm else "n/a"} DKK per extra person-month.
+* Cox, months 0 to 12: HR {cx["months_0_12"]["hazard_ratio"]:.2f}
+  ({cx["months_0_12"]["ci_low"]:.2f} to {cx["months_0_12"]["ci_high"]:.2f}). The
+  {p["truth"]["hazard_ratio_months_1_12"]:.2f} built in is a ratio for the same person; with
+  unobserved frailty the Cox model estimates a population ratio that is pulled towards 1, so
+  the two need not agree. Change at month 12: ratio {ch["ratio_after_vs_before"]:.2f}
+  ({ch["ratio_ci_low"]:.2f} to {ch["ratio_ci_high"]:.2f}), HR after month 12
+  {ch["hr_after_12"]:.2f} ({ch["hr_after_12_ci"][0]:.2f} to {ch["hr_after_12_ci"][1]:.2f}).
+* In this draw a single pooled Cox HR over 24 months is {cx["months_0_24"]["hazard_ratio"]:.2f}
+  ({cx["months_0_24"]["ci_low"]:.2f} to {cx["months_0_24"]["ci_high"]:.2f}) and the
+  proportional hazards test gives p = {cx["months_0_24"]["ph_test_p"]:.2f}. Neither would
+  have revealed the timing effect; the pre-specified harm outcome does.
+* Decision rule in this draw: primary lower bound above zero:
+  {"yes" if rule["primary_lower_ci_above_zero"] else "no"}; giveback share at most
+  {100 * a["max_giveback_share"]:.0f}%: {"yes" if rule["giveback_share_below_max"] else "no"};
+  cost test: not possible without a replacement cost. The rule {verdict}.
 
 ![Kaplan-Meier on simulated data](km_simulated.png)
 """
@@ -371,14 +467,18 @@ does not know these values.
 
 def brief_md(d: dict) -> str:
     f, p = facts(d), d["pilot"]
-    a, pr, se, c = p["assumptions"], p["primary"], p["side_effect_m13_15"], p["cost"]
+    a, pr, hm, c = p["assumptions"], p["primary"], p["harm_m13_15"], p["cost"]
     lo, hi = a["post_payment_months"]
     b = f["bench_ci"]
+    mc = p["mde_cluster_at_pilot_n_pp"]
+    rule = p["decision_rule"]
+    stop = not (rule["primary_lower_ci_above_zero"] and rule["giveback_share_below_max"])
+    r24 = p["retention"]["24m"]
     return f"""# Beslutningsoplæg: Skal en fastholdelsesbonus afprøves, og hvordan?
 
-*Demo. Afsnit 1 bygger på offentlige amerikanske data (NSW jobtræningsforsøget, 1975 til
-1978). Alle tal om en bonuspilot er antagelser eller **simulerede**. Der er ikke brugt data
-fra Forsvaret eller danske registre. Tallene er genereret automatisk fra kørslen.*
+*Demo. Afsnit 1 og 2 bygger på offentlige amerikanske data (NSW-forsøget med jobtræning,
+1975 til 1978). Alle tal om en bonuspilot er antagelser eller **simulerede**. Der er ikke
+brugt data fra Forsvaret eller danske registre. Tallene er genereret automatisk fra kørslen.*
 
 **Anbefaling:** Indfør ikke en bonus bredt på baggrund af sammenligninger mellem dem, der
 bliver, og dem, der går. Afprøv den i en stratificeret, randomiseret pilot med cirka
@@ -386,31 +486,33 @@ bliver, og dem, der går. Afprøv den i en stratificeret, randomiseret pilot med
 
 ## 1. Hvad data viser
 
-* I NSW forsøget, hvor deltagelse blev lodtrukket, øgede jobtræning indkomsten i 1978 med
-  {dk(f["bench"])} USD (95 % KI {dk(b["ci_low"])} til {dk(b["ci_high"])}).
+* I NSW-forsøget, hvor deltagelse blev lodtrukket, øgede jobtræningen deltagernes indkomst i
+  1978 med gennemsnitligt {dk(f["bench"])} USD (95 % KI {dk(b["ci_low"])} til
+  {dk(b["ci_high"])}).
 * Sammenlignes de samme deltagere i stedet med to amerikanske surveygrupper (PSID og CPS),
   bliver resultatet {dk(f["naive"]["psid"])} og {dk(f["naive"]["cps"])} USD: forkert fortegn.
-* Når der korrigeres for alder, uddannelse og tidligere indkomst, ligger estimaterne mellem
-  {dk(f["adj_min"])} og {dk(f["adj_max"])} USD. Intervallerne for propensity score metoderne
-  er i gennemsnit {dk(f["ps_width_mean"])} USD brede, altså bredere end selve effekten, og et
-  andet, lige så rimeligt modelvalg flytter et estimat op til {dk(f["spec_shift_max"])} USD.
+* Korrigeret for alder, uddannelse og tidligere indkomst ligger estimaterne mellem
+  {dk(f["adj_min"])} og {dk(f["adj_max"])} USD. Intervallerne er bredere end selve effekten,
+  et andet rimeligt modelvalg flytter et estimat med op til {dk(f["spec_shift_max"])} USD, og
+  på PSID giver en afgrænsning til de {f["trim_psid_n_t"]} deltagere med sammenlignelige kontroller
+  {dk(f["trim_psid_ipw"])} USD.
 
 ## 2. Sandsynlige forklaringer
 
-* Deltagerne adskilte sig meget fra sammenligningsgruppen før forløbet. Den naive forskel
+* Deltagerne adskilte sig meget fra sammenligningsgrupperne før forløbet. Den naive forskel
   måler, hvem der deltog, ikke hvad træningen gjorde.
-* Korrektion kommer tættere på her, fordi valget om at deltage især hang sammen med tidligere
-  indkomst og ledighed, som er målt. Uden forsøget kunne vi ikke vide, hvilket af de
-  korrigerede estimater der var det rigtige. Det samme vil sandsynligvis gælde for en bonus: de, der får eller tager imod
-  den, adskiller sig fra andre på måder, vi kun delvist kan måle.
+* De korrigerede estimater kommer tættere på, sandsynligvis fordi valget om at deltage især
+  hang sammen med tidligere indkomst og ledighed, som er målt. Det er omdiskuteret i
+  litteraturen, og uden forsøget kunne vi ikke vide, hvilket estimat der var det rigtige.
+  Det samme vil sandsynligvis gælde for en bonus.
 
 ## 3. Hvad vi endnu ikke har belæg for
 
 * Om en bonus virker for nogen gruppe i Forsvaret, og hvor stor effekten er. De
   {dk(100 * a["target_effect_pp"])} procentpoint nedenfor er en planlægningsantagelse.
 * Om korrektionsmetoderne ville ramme rigtigt på danske personaledata. NSW er én case.
-* Hvad det koster at erstatte en medarbejder, som går. Uden det tal kan prisen pr. ekstra
-  fastholdt ikke vurderes.
+* Hvad det koster at erstatte en medarbejder, som går, og hvor meget fastholdelse varierer
+  mellem enheder. Uden det kan prisen ikke vurderes, og designet ikke låses endeligt.
 * Virkning efter 24 måneder og på motivation og oplevet retfærdighed.
 
 ## 4. Effekt, ressourcer, gennemførlighed og risiko
@@ -418,15 +520,16 @@ bliver, og dem, der går. Afprøv den i en stratificeret, randomiseret pilot med
 | | |
 |---|---|
 | Forventet effekt | Antagelse: fastholdelse efter 12 mdr. fra {dk(100 * a["baseline_retention_12m"])} % til {dk(100 * (a["baseline_retention_12m"] + a["target_effect_pp"]))} %. Mindste påviselige effekt med {dk(p["n_pilot"])} personer: {dk(p["mde_at_pilot_n_pp"], 1)} procentpoint. |
-| Ressourcebehov | Bonus på {dk(a["bonus_dkk"])} kr. (antagelse) til cirka {dk(p["n_pilot"] // 2)} i bonusgruppen: cirka {dkk_mio(c["planned_budget_dkk"])} Under antagelsen koster hver ekstra fastholdt medarbejder {dk(c["planned_cost_per_extra_retained_dkk"])} kr., fordi de fleste ville være blevet alligevel. Dertil analysetid. |
-| Gennemførlighed | Kræver cirka {dk(p["n_pilot"])} i målgruppen. Lodtrækning af hele enheder ({a["n_units"]} stk.) kan kun påvise cirka {dk(p["mde_cluster_at_pilot_n_pp"], 0)} procentpoint, så lodtrækning skal ske på personniveau inden for {p["n_strata"]} strata. |
-| Risiko for bivirkninger | Udskudt afgang efter udbetaling. I simulationen (bygget ind som antagelse) steg afgangen i måned {lo} til {hi} med {dk(se["effect_pp"], 1)} procentpoint, og forskellen efter 24 mdr. faldt til {dk(p["retention_24m"]["diff_pp"], 1)} point. Desuden fortrængning af indre motivation og oplevet uretfærdighed blandt kolleger uden bonus. |
-| Opfølgning | Måned 6 (datakvalitet), 12 (hovedresultat og kort notat), {hi} (bivirkninger), 24 (varighed). Beslutningsregel er fastlagt på forhånd. |
+| Ressourcebehov | Bonus på {dk(a["bonus_dkk"])} kr. (antagelse), som kun udbetales til dem, der stadig er ansat efter 12 mdr.: under antagelsen cirka {dk(c["planned_n_paid"])} ({dk(100 * c["planned_share_paid"])} %) af de {dk(p["n_pilot"] // 2)} i bonusgruppen, i alt cirka {dkk_mio(c["planned_budget_dkk"])} Hver ekstra fastholdt medarbejder koster da {dk(c["planned_cost_per_extra_retained_12m_dkk"])} kr., fordi de fleste ville være blevet alligevel. Dertil analysetid. |
+| Gennemførlighed | Kræver cirka {dk(p["n_pilot"])} i målgruppen. Lodtrækning af hele enheder ({a["n_units"]} stk.) kan ved en antaget ICC på {dk(a["icc"], 2)} kun påvise cirka {dk(mc[str(a["icc"])], 1)} procentpoint ({dk(mc["0.005"], 1)} ved 0,005), så lodtrækning skal ske på personniveau inden for {p["n_strata"]} strata. |
+| Risiko for bivirkninger | Udskudt afgang efter udbetaling. I simulationen (bygget ind som antagelse) gik {dk(hm["effect_pp"], 1)} af de {dk(pr["effect_pp"], 1)} procentpoint tabt igen i måned {lo} til {hi}, og efter 24 mdr. var forskellen {dk(r24["effect_pp"], 1)} procentpoint (95 % KI {dk(r24["ci_low_pp"], 1)} til {dk(r24["ci_high_pp"], 1)}). Desuden fortrængning af indre motivation og oplevet uretfærdighed blandt kolleger uden bonus. |
+| Opfølgning | Måned 6 (datakvalitet), 12 (hovedresultat og kort notat), {hi} (bivirkninger), 24 (varighed og pris). Beslutningsreglen er fastlagt på forhånd: nedre grænse over 0, højst {dk(100 * a["max_giveback_share"])} % af gevinsten tabt igen efter udbetaling, og en pris pr. ekstra ansættelsesmåned under prisen for en ubesat stilling. |
 
 *Test af analyseplanen på simulerede data:* med en indbygget effekt på
-{dk(p["truth"]["true_effect_retention_12m_pp"])} point fandt den planlagte analyse
-{dk(pr["effect_pp"], 1)} point (95 % KI {dk(pr["ci_low_pp"], 1)} til
-{dk(pr["ci_high_pp"], 1)}). Det viser kun, at metoden virker, ikke at en bonus gør.
+{dk(p["truth"]["true_effect_retention_12m_pp"])} procentpoint fandt analysen
+{dk(pr["effect_pp"], 1)} procentpoint (95 % KI {dk(pr["ci_low_pp"], 1)} til {dk(pr["ci_high_pp"], 1)}).
+{"Beslutningsreglen ville stoppe en udrulning i dette scenarie på grund af den udskudte afgang." if stop else "Beslutningsreglen ville tillade en udrulning i dette scenarie."}
+Det viser kun, at metoden virker, ikke at en bonus gør.
 """
 
 
@@ -436,7 +539,7 @@ HTML_TEMPLATE = """<!doctype html>
 <title>{title}</title>
 <style>
 @page {{ size: A4; margin: 14mm; }}
-body {{ font: 10pt/1.38 Georgia, serif; max-width: 182mm; margin: 0 auto; padding: 12px;
+body {{ font: 9.5pt/1.35 Georgia, serif; max-width: 182mm; margin: 0 auto; padding: 12px;
        color: #1a1a1a; background: #fff; }}
 h1 {{ font-size: 15pt; margin: 0 0 6px; }}
 h2 {{ font-size: 11.5pt; margin: 10px 0 3px; border-bottom: 1px solid #bbb; }}
@@ -470,7 +573,7 @@ def readme_block(d: dict) -> str:
         "",
         f"**Real data (LaLonde / NSW).** Experimental benchmark: **{usd(f['bench'])} USD** "
         f"(95% bootstrap CI {usd(f['bench_ci']['ci_low'])} to "
-        f"{usd(f['bench_ci']['ci_high'])}).",
+        f"{usd(f['bench_ci']['ci_high'])}). Estimates in USD with 95% bootstrap CI:",
         "",
         "| Method | PSID controls | CPS controls |",
         "|---|---:|---:|",
@@ -481,38 +584,54 @@ def readme_block(d: dict) -> str:
             r = row(est, o, m)
             cells.append(f"{usd(r['estimate'])} ({usd(r['ci_low'])} to {usd(r['ci_high'])})")
         lines.append(f"| {METHODS[m]} | {cells[0]} | {cells[1]} |")
-    pr, se = p["primary"], p["side_effect_m13_15"]
-    lo, hi = p["assumptions"]["post_payment_months"]
+    excl = ", ".join(name(s, m) for s, m in f["bias_excl"]) or "none"
     lines += [
         "",
-        f"Propensity score specification changes move an estimate by up to "
-        f"{usd(f['spec_shift_max'])} USD; IPW on PSID rests on an effective sample of about "
-        f"{f['ess_psid']:.0f} controls.",
+        f"Bias intervals (joint bootstrap of estimate minus benchmark) that exclude zero: "
+        f"{excl}. A propensity score specification change moves an estimate by up to "
+        f"{usd(f['spec_shift_max'])} USD. PSID weighting fails its balance check after "
+        f"weighting (max abs SMD {f['smd_ipw_psid']:.2f}), rests on about "
+        f"{f['ess_psid']:.0f} effective controls, and gives {usd(f['trim_psid_ipw'])} USD once "
+        "trimmed to scores between 0.1 and 0.9.",
+    ]
+    a, pr, hm, oc = p["assumptions"], p["primary"], p["harm_m13_15"], p["operating_characteristics"]
+    lo, hi = a["post_payment_months"]
+    mc = p["mde_cluster_at_pilot_n_pp"]
+    r24 = p["retention"]["24m"]
+    lines += [
         "",
-        f"**Simulated pilot (not real data).** Required n for +"
-        f"{100 * p['assumptions']['target_effect_pp']:.0f} points at "
-        f"{100 * p['assumptions']['power']:.0f}% power: "
+        f"**Simulated pilot (not real data).** Baseline retention assumed "
+        f"{100 * a['baseline_retention_12m']:.0f}%. Required n for +"
+        f"{100 * a['target_effect_pp']:.0f} points at {100 * a['power']:.0f}% power: "
         f"{p['n_required_for_target']} (plan uses {p['n_pilot']}; simulated power "
-        f"{100 * p['simulated_power_at_pilot_n']:.0f}%, baseline retention assumed "
-        f"{100 * p['assumptions']['baseline_retention_12m']:.0f}%). Randomising the "
-        f"{p['assumptions']['n_units']} units instead would give a minimum detectable effect "
-        f"of {p['mde_cluster_at_pilot_n_pp']:.1f} points with the same people. "
-        f"Planned analysis on one simulated "
-        f"pilot: {pr['effect_pp']:.1f} points (95% CI {pr['ci_low_pp']:.1f} to "
-        f"{pr['ci_high_pp']:.1f}) against a true {p['truth']['true_effect_retention_12m_pp']:.0f}; post payment exits months {lo} to {hi} "
-        f"+{se['effect_pp']:.1f} points (95% CI {se['ci_low_pp']:.1f} to "
-        f"{se['ci_high_pp']:.1f}) against a built-in spike.",
+        f"{100 * oc['primary_power']:.1f}%, Monte Carlo SE {100 * oc['primary_power_mc_se']:.1f}, "
+        f"{oc['reps']} pilots). Randomising the {a['n_units']} units instead: minimum "
+        f"detectable effect {mc[str(a['icc'])]:.1f} points at an assumed ICC of {a['icc']}, "
+        f"{mc['0.005']:.1f} at 0.005.",
+        "",
+        f"One simulated pilot: primary effect {pr['effect_pp']:.1f} points (95% CI "
+        f"{pr['ci_low_pp']:.1f} to {pr['ci_high_pp']:.1f}) against a true "
+        f"{p['truth']['true_effect_retention_12m_pp']:.0f}; extra exits in months {lo} to {hi} "
+        f"{hm['effect_pp']:.1f} points ({hm['ci_low_pp']:.1f} to {hm['ci_high_pp']:.1f}), so "
+        f"{100 * p['giveback_share']:.0f}% of the gain is given back; gap at 24 months "
+        f"{r24['effect_pp']:.1f} points ({r24['ci_low_pp']:.1f} to {r24['ci_high_pp']:.1f}). "
+        f"The harm test detects the built-in spike in {100 * oc['harm_power']:.0f}% of "
+        f"simulated pilots and rejects in {100 * oc['harm_rejections_without_spike']:.0f}% "
+        "of pilots without one.",
     ]
     if d["r"]:
         r = d["r"]
+        cox = p["cox"]
         lines += [
             "",
-            f"**R cross-check** ({r['r_version']}): benchmark {r['benchmark']:,.2f}, IPW PSID "
-            f"{r['ipw_psid']:,.2f}, IPW CPS {r['ipw_cps']:,.2f} USD; Cox HR (simulated) "
-            f"{r['cox_hr_months_0_12_simulated']:.4f}. Python gives "
-            f"{f['bench']:,.2f}, {row(est, 'psid', 'ipw')['estimate']:,.2f}, "
-            f"{row(est, 'cps', 'ipw')['estimate']:,.2f} and "
-            f"{p['cox']['months_0_12']['hazard_ratio']:.4f}.",
+            f"**R cross-check** ({r['r_version']}), R vs Python: benchmark "
+            f"{r['benchmark']:,.2f} vs {f['bench']:,.2f}; IPW PSID {r['ipw_psid']:,.2f} vs "
+            f"{row(est, 'psid', 'ipw')['estimate']:,.2f}; IPW CPS {r['ipw_cps']:,.2f} vs "
+            f"{row(est, 'cps', 'ipw')['estimate']:,.2f} USD; simulated Cox HR months 0 to 12 "
+            f"{r['cox_hr_months_0_12_simulated']:.4f} vs "
+            f"{cox['months_0_12']['hazard_ratio']:.4f}; change at month 12 "
+            f"{r['cox_change_at_12_ratio_simulated']:.4f} vs "
+            f"{cox['change_at_12']['ratio_after_vs_before']:.4f}.",
         ]
     lines += ["", END]
     return "\n".join(lines)

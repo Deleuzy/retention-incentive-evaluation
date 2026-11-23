@@ -5,6 +5,7 @@
     3114.6743125123703
   ],
   "bootstrap_reps": 500,
+  "bootstrap": "joint: treated drawn once per resample and shared by all samples",
   "seed": 20261201,
   "diagnostics": {
     "experimental": {
@@ -12,33 +13,45 @@
       "n_control": 260,
       "distinct_matched_controls": 106,
       "ipw_effective_n_controls": 201.4331720675074,
+      "ipw_top5_control_weight_share": 0.06155910828626798,
       "share_controls_below_min_treated_ps": 0.04230769230769231,
-      "share_treated_above_max_control_ps": 0.005405405405405406,
+      "n_treated_above_max_control_ps": 1,
       "max_abs_smd_raw": 0.30398643906182043,
-      "max_abs_smd_matched": 0.1625085510796467,
-      "max_abs_smd_ipw": 0.02835045697933559
+      "max_abs_smd_matched": 0.15753670833137612,
+      "max_abs_smd_ipw": 0.02835045697933559,
+      "covariates_smd_ipw_above_0.1": []
     },
     "psid": {
       "n_treated": 185,
       "n_control": 2490,
       "distinct_matched_controls": 56,
       "ipw_effective_n_controls": 9.662340566440529,
+      "ipw_top5_control_weight_share": 0.569921351875344,
       "share_controls_below_min_treated_ps": 0.5823293172690763,
-      "share_treated_above_max_control_ps": 0.0,
+      "n_treated_above_max_control_ps": 0,
       "max_abs_smd_raw": 1.8423346660231166,
-      "max_abs_smd_matched": 0.23662620117591557,
-      "max_abs_smd_ipw": 0.33662801864781267
+      "max_abs_smd_matched": 0.2712413166740037,
+      "max_abs_smd_ipw": 0.33662801864781267,
+      "covariates_smd_ipw_above_0.1": [
+        "age",
+        "education",
+        "married",
+        "u74",
+        "u75"
+      ]
     },
     "cps": {
       "n_treated": 185,
       "n_control": 15992,
       "distinct_matched_controls": 111,
       "ipw_effective_n_controls": 89.07376363330262,
+      "ipw_top5_control_weight_share": 0.1916041360476016,
       "share_controls_below_min_treated_ps": 0.7329289644822411,
-      "share_treated_above_max_control_ps": 0.02702702702702703,
+      "n_treated_above_max_control_ps": 5,
       "max_abs_smd_raw": 2.4277468150409307,
-      "max_abs_smd_matched": 0.0776804008014878,
-      "max_abs_smd_ipw": 0.09928323575863793
+      "max_abs_smd_matched": 0.09195058494053246,
+      "max_abs_smd_ipw": 0.09928323575863793,
+      "covariates_smd_ipw_above_0.1": []
     }
   }
 }

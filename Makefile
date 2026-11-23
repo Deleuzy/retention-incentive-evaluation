@@ -1,4 +1,4 @@
-# Full pipeline. About 1.5 minutes on an 8 GB M1 laptop.
+# Full pipeline. About 2 minutes on an 8 GB M1 laptop.
 .PHONY: all causal pilot r report site test lint check
 
 all: causal pilot r report
@@ -24,6 +24,7 @@ test:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
+	@command -v actionlint >/dev/null && actionlint || echo "actionlint not installed, skipped"
 
 check: lint test
 	uv run python -m rie.report --check

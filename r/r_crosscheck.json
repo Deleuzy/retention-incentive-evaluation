@@ -4,5 +4,6 @@
   "benchmark_welch_ci": [474.0104511878, 3114.6743125124],
   "ipw_psid": 2765.7768187439,
   "ipw_cps": 1653.8980776304,
-  "cox_hr_months_0_12_simulated": 0.65661694658
+  "cox_hr_months_0_12_simulated": 0.78034181662,
+  "cox_change_at_12_ratio_simulated": 1.5495113278
 }

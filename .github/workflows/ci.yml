@@ -1,33 +1,60 @@
 name: ci
 
+# Continuous integration. Runs on branches and pull requests, and is called by cd.yml as
+# the gate before anything is built or deployed. Everything here is offline: the raw data
+# is cached in data/raw and checked against SHA-256 digests.
+
 on:
   push:
-    branches-ignore: [main] # main runs this as the gate inside cd.yml
+    branches-ignore: [main] # main and tags run this as the gate inside cd.yml
   pull_request:
   workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  python:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Lint
+      - name: Lockfile is up to date
+        run: uv lock --check
+      - name: Ruff lint and format
         run: |
-          uv run ruff check .
-          uv run ruff format --check .
-      - name: Tests (offline, cached data in data/raw)
-        run: uv run pytest
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+      - name: Workflows (actionlint)
+        uses: raven-actions/actionlint@v2
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Tests (offline, cached data)
+        run: uv run --frozen pytest
       - name: Documents match the committed run outputs
-        run: uv run python -m rie.report --check
+        run: uv run --frozen python -m rie.report --check
 
   r:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: r-lib/actions/setup-r@v2
@@ -41,4 +68,22 @@ jobs:
         with:
           python-version: "3.12"
       - name: R numbers agree with Python
-        run: uv run pytest tests/test_causal.py -k r_crosscheck
+        run: uv run --frozen pytest tests/test_causal.py -k r_crosscheck
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist
+        run: uv build
+      - name: Smoke test the wheel in a clean environment
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke/bin/python dist/*.whl
+          /tmp/smoke/bin/python -c "import rie.estimators, rie.pilot, rie.report; print('wheel imports ok')"
+      - name: Site builds
+        run: uv run --frozen python scripts/build_site.py --out site

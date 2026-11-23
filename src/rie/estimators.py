@@ -140,11 +140,7 @@ def estimate_all(df: pd.DataFrame, spec: str = "dw") -> Fit:
 
 
 def bootstrap(df: pd.DataFrame, reps: int, seed: int) -> pd.DataFrame:
-    """Nonparametric bootstrap, resampling treated and controls separately.
-
-    Note: Abadie and Imbens (2008) show the naive bootstrap is not valid for nearest
-    neighbour matching, so the matching interval is indicative only.
-    """
+    """Nonparametric bootstrap of one sample, resampling treated and controls separately."""
     rng = np.random.default_rng(seed)
     tr_idx = np.flatnonzero(df["treat"].to_numpy() == 1)
     co_idx = np.flatnonzero(df["treat"].to_numpy() == 0)
@@ -152,6 +148,41 @@ def bootstrap(df: pd.DataFrame, reps: int, seed: int) -> pd.DataFrame:
     for _ in range(reps):
         idx = np.concatenate([rng.choice(tr_idx, tr_idx.size), rng.choice(co_idx, co_idx.size)])
         rows.append(estimate_all(df.iloc[idx].reset_index(drop=True)).estimates)
+    return pd.DataFrame(rows)
+
+
+def bootstrap_joint(samples: dict[str, pd.DataFrame], reps: int, seed: int) -> pd.DataFrame:
+    """Joint bootstrap over samples that share the same treated units.
+
+    All samples here contain the same 185 NSW treated people, so each resample draws the
+    treated once and reuses that draw in every sample, and draws each control group
+    separately. This keeps the dependence between an observational estimate and the
+    experimental benchmark, so the bootstrap distribution of (estimate minus benchmark)
+    gives a valid interval for the bias, which treating the benchmark as known would not.
+
+    Abadie and Imbens (2008) show the naive bootstrap is not valid for nearest neighbour
+    matching, so the matching intervals are indicative only.
+
+    Returns a long frame with columns rep, sample, method, estimate.
+    """
+    rng = np.random.default_rng(seed)
+    treated = {k: np.flatnonzero(v["treat"].to_numpy() == 1) for k, v in samples.items()}
+    controls = {k: np.flatnonzero(v["treat"].to_numpy() == 0) for k, v in samples.items()}
+    first = next(iter(samples.values()))
+    n_t = treated[next(iter(samples))].size
+    ref = first.iloc[treated[next(iter(samples))]][OLS_COLS + [OUTCOME]].to_numpy()
+    for k, v in samples.items():
+        other = v.iloc[treated[k]][OLS_COLS + [OUTCOME]].to_numpy()
+        if treated[k].size != n_t or not np.array_equal(other, ref):
+            raise ValueError(f"treated units in {k} differ from the first sample")
+    rows = []
+    for r in range(reps):
+        draw_t = rng.integers(0, n_t, n_t)
+        for k, v in samples.items():
+            c = controls[k]
+            idx = np.concatenate([treated[k][draw_t], rng.choice(c, c.size)])
+            est = estimate_all(v.iloc[idx].reset_index(drop=True)).estimates
+            rows += [{"rep": r, "sample": k, "method": m, "estimate": e} for m, e in est.items()]
     return pd.DataFrame(rows)
 
 
@@ -166,16 +197,29 @@ def welch_ci(df: pd.DataFrame, level: float = 0.95) -> tuple[float, float]:
     return float(d - q * se), float(d + q * se)
 
 
-def smd(df: pd.DataFrame, cols: list[str], weights: np.ndarray | None = None) -> pd.Series:
-    """Standardised mean difference (treated minus controls) with a pooled unweighted SD.
+def pooled_sd(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    t = df["treat"].to_numpy() == 1
+    return pd.Series({c: np.sqrt((df[c][t].var(ddof=1) + df[c][~t].var(ddof=1)) / 2) for c in cols})
 
-    If weights are given, the control mean is weighted (treated weights are ignored).
+
+def smd(
+    df: pd.DataFrame,
+    cols: list[str],
+    weights: np.ndarray | None = None,
+    sd_ref: pd.Series | None = None,
+) -> pd.Series:
+    """Standardised mean difference (treated minus controls).
+
+    The denominator is the pooled unweighted SD of `sd_ref` if given, otherwise of `df`.
+    Pass the SDs of the unmatched sample so raw, matched and weighted columns share one
+    fixed denominator (Austin 2009). If weights are given, the control mean is weighted.
     """
     t = df["treat"].to_numpy() == 1
+    ref = pooled_sd(df, cols) if sd_ref is None else sd_ref
     out = {}
     for c in cols:
         v = df[c].to_numpy()
-        sd = np.sqrt((v[t].var(ddof=1) + v[~t].var(ddof=1)) / 2)
+        sd = ref[c]
         mc = v[~t].mean() if weights is None else np.average(v[~t], weights=weights[~t])
         out[c] = (v[t].mean() - mc) / sd if sd > 0 else 0.0
     return pd.Series(out)
@@ -183,3 +227,18 @@ def smd(df: pd.DataFrame, cols: list[str], weights: np.ndarray | None = None) ->
 
 def effective_n(w: np.ndarray) -> float:
     return float(w.sum() ** 2 / (w**2).sum())
+
+
+def top_weight_share(w: np.ndarray, k: int = 5) -> float:
+    """Share of the total weight carried by the k largest weights."""
+    return float(np.sort(w)[::-1][:k].sum() / w.sum())
+
+
+def trimmed(df: pd.DataFrame, lo: float = 0.1, hi: float = 0.9) -> pd.DataFrame:
+    """Keep units whose estimated propensity score lies in [lo, hi] (Crump et al. 2009).
+
+    This changes the estimand: the effect is then for treated people with comparable
+    controls, not for all NSW participants.
+    """
+    p = propensity(df)
+    return df[(p >= lo) & (p <= hi)].reset_index(drop=True)

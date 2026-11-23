@@ -1,20 +1,24 @@
 name: cd
 
-# On every push to main that passes CI: rerun the whole pipeline from the raw data,
-# regenerate the documents, build the site (report, plan, Danish brief, PDF of the brief)
-# and deploy it to GitHub Pages. The job summary shows whether the fresh run changed any
-# committed document.
+# Continuous delivery, gated by CI.
+#  * push to main: build the site (report, plan, Danish brief and its PDF) from the committed
+#    outputs, which CI has just checked against the documents, and deploy it to GitHub Pages.
+#    What is published is exactly what is in the repository; reproduce.yml is the workflow
+#    that reruns the pipeline from the raw data.
+#  * version tag (v0.2.0, ...): same build, then a GitHub Release with the wheel, the sdist,
+#    a results bundle and the brief as PDF.
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: cd-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,38 +28,43 @@ jobs:
   build:
     needs: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-      - name: Install jsonlite
-        run: Rscript -e 'install.packages("jsonlite")'
-      - name: Rerun the pipeline
-        run: make all
-      - name: Did the fresh run change anything?
+      - name: Tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          {
-            echo "### Fresh run vs committed outputs"
-            echo '```'
-            git diff --stat -- causal design brief README.md r || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          version=$(uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != pyproject v$version"; exit 1; }
+      - name: Documents match the committed outputs
+        run: uv run --frozen python -m rie.report --check
       - name: Build site
-        run: make site
+        run: uv run --frozen python scripts/build_site.py --out site
       - name: PDF of the brief
         run: |
           google-chrome --headless --disable-gpu --no-sandbox --no-pdf-header-footer \
-            --print-to-pdf=site/brief/beslutningsoplaeg.pdf site/brief/beslutningsoplaeg.html
+            --print-to-pdf="$PWD/site/brief/beslutningsoplaeg.pdf" \
+            "file://$PWD/site/brief/beslutningsoplaeg.html"
+          test -s site/brief/beslutningsoplaeg.pdf
+      - name: Wheel, sdist and results bundle
+        run: |
+          uv build
+          zip -r "dist/results-${GITHUB_SHA::7}.zip" causal design brief r/r_crosscheck.json README.md
+          cp site/brief/beslutningsoplaeg.pdf dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/
 
-  deploy:
+  deploy-pages:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -66,3 +75,19 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag

@@ -1,11 +1,12 @@
-# Independent cross-check in R of three numbers produced by the Python pipeline.
+# Independent cross-check in R of numbers produced by the Python pipeline.
 #
 #  1. Experimental benchmark: difference in means and Welch 95% CI (stats::t.test),
 #     read straight from the raw Stata file, not from anything Python wrote.
 #  2. IPW estimate of the ATT on the PSID and CPS samples, propensity score fitted with
 #     stats::glm using the same specification as src/rie/estimators.py::ps_design.
 #  3. Stratified Cox hazard ratio for months 0 to 12 in the SIMULATED pilot data
-#     (survival::coxph, Efron ties, the same default as lifelines).
+#     (survival::coxph, Efron ties, the same default as lifelines), and the pre-specified
+#     change in the hazard ratio at month 12 (records split with survival::survSplit).
 #
 # Uses only packages that ship with R (foreign, survival) plus jsonlite.
 # Run from the repository root:  Rscript r/crosscheck.R
@@ -47,6 +48,11 @@ pilot <- read.csv(file.path("design", "simulated_pilot_data.csv"))
 pilot$ev12 <- ifelse(pilot$months <= 12, pilot$event, 0)
 pilot$t12 <- pmin(pilot$months, 12)
 cx <- coxph(Surv(t12, ev12) ~ treat + strata(stratum), data = pilot, ties = "efron")
+split <- survSplit(Surv(months, event) ~ treat + stratum, data = pilot, cut = 12,
+                   episode = "ep")
+split$treat_post12 <- split$treat * (split$ep == 2)
+cx2 <- coxph(Surv(tstart, months, event) ~ treat + treat_post12 + strata(stratum),
+             data = split, ties = "efron")
 
 out <- list(
   r_version = R.version.string,
@@ -54,7 +60,8 @@ out <- list(
   benchmark_welch_ci = unname(as.numeric(tt$conf.int)),
   ipw_psid = ipw_att("psid_controls.dta"),
   ipw_cps = ipw_att("cps_controls.dta"),
-  cox_hr_months_0_12_simulated = unname(exp(coef(cx))["treat"])
+  cox_hr_months_0_12_simulated = unname(exp(coef(cx))["treat"]),
+  cox_change_at_12_ratio_simulated = unname(exp(coef(cx2))["treat_post12"])
 )
 writeLines(toJSON(out, auto_unbox = TRUE, digits = 10, pretty = TRUE),
            file.path("r", "r_crosscheck.json"))

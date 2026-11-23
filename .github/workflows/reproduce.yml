@@ -1,0 +1,57 @@
+name: reproduce
+
+# Full rerun on a clean machine with the raw data downloaded again from the source and
+# checked against its SHA-256 digests. Started by hand and once a month, so a change or
+# disappearance of the upstream files is noticed. Fails if the fresh run would change any
+# committed document, uploads the fresh outputs and puts the diff in the job summary.
+# Never pushes anything.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install jsonlite
+        run: Rscript -e 'install.packages("jsonlite")'
+      - name: Download the raw data again and verify checksums
+        run: |
+          rm -f data/raw/*.dta
+          uv run --frozen python -c "from rie.data import fetch; print(fetch())"
+      - name: Full pipeline
+        run: make all
+      - name: Diff against committed outputs
+        run: |
+          {
+            echo "### Fresh run vs committed outputs"
+            echo '```'
+            git diff --stat -- causal design brief README.md r
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Tests on the fresh outputs
+        run: uv run --frozen pytest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fresh-outputs
+          path: |
+            causal/
+            design/
+            brief/
+            r/r_crosscheck.json
+      - name: Fail if any published document would change
+        run: git diff --exit-code -- README.md brief causal/RESULTS.md design/pre_analysis_plan.md

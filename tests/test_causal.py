@@ -64,10 +64,7 @@ def test_att_weights():
     assert np.allclose(E.att_weights(p, t), [1.0, 0.25, 4.0])
 
 
-def test_estimators_recover_known_att_on_synthetic_confounded_data():
-    """Selection on an observed covariate: naive is biased, IPW and AIPW are not."""
-    rng = np.random.default_rng(0)
-    n = 4000
+def _synthetic_covariates(n: int, rng: np.random.Generator) -> pd.DataFrame:
     df = pd.DataFrame(
         {
             "age": rng.normal(30, 8, n),
@@ -80,15 +77,70 @@ def test_estimators_recover_known_att_on_synthetic_confounded_data():
         }
     )
     df["re75"] = np.maximum(0, df["re74"] + rng.normal(0, 2000, n))
-    df = data.add_features(df)
+    return data.add_features(df)
+
+
+TRUE_ATT = 1500.0
+
+
+def test_estimators_recover_known_att_when_both_models_are_right():
+    rng = np.random.default_rng(0)
+    df = _synthetic_covariates(4000, rng)
     logit = 1.5 - 0.0004 * df["re75"] + 0.5 * df["u75"]
-    df["treat"] = (rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int)
-    true_att = 1500.0
-    df["re78"] = 2000 + 0.8 * df["re75"] + true_att * df["treat"] + rng.normal(0, 3000, n)
+    df["treat"] = (rng.random(len(df)) < 1 / (1 + np.exp(-logit))).astype(int)
+    df["re78"] = 2000 + 0.8 * df["re75"] + TRUE_ATT * df["treat"] + rng.normal(0, 3000, len(df))
     est = E.estimate_all(df).estimates
-    assert abs(est["diff_means"] - true_att) > 1500
+    assert abs(est["diff_means"] - TRUE_ATT) > 1500
     for m in ("ols", "ipw", "aipw"):
-        assert est[m] == pytest.approx(true_att, abs=400), m
+        assert est[m] == pytest.approx(TRUE_ATT, abs=400), m
+    assert est["psm"] == pytest.approx(TRUE_ATT, abs=700)
+
+
+def test_aipw_is_doubly_robust_wrong_propensity_model():
+    """Selection through an interaction the propensity design lacks; outcome model right."""
+    rng = np.random.default_rng(1)
+    df = _synthetic_covariates(6000, rng)
+    low_single = ((df["re75"] < 6000) & (df["married"] == 0)).astype(float)
+    older_black = ((df["age"] > 35) & (df["black"] == 1)).astype(float)
+    logit = -0.5 + 2.0 * low_single - 1.5 * older_black
+    df["treat"] = (rng.random(len(df)) < 1 / (1 + np.exp(-logit))).astype(int)
+    noise = rng.normal(0, 3000, len(df))
+    df["re78"] = 2000 + 0.8 * df["re75"] + 300 * df["married"] + TRUE_ATT * df["treat"] + noise
+    est = E.estimate_all(df).estimates
+    assert est["aipw"] == pytest.approx(TRUE_ATT, abs=250)
+    assert abs(est["ipw"] - TRUE_ATT) > abs(est["aipw"] - TRUE_ATT)
+
+
+def test_aipw_is_doubly_robust_wrong_outcome_model():
+    """Outcome quadratic in 1975 earnings (OLS is linear); propensity model right."""
+    rng = np.random.default_rng(2)
+    df = _synthetic_covariates(6000, rng)
+    logit = 1.5 - 0.0004 * df["re75"] + 0.5 * df["u75"]
+    df["treat"] = (rng.random(len(df)) < 1 / (1 + np.exp(-logit))).astype(int)
+    noise = rng.normal(0, 3000, len(df))
+    df["re78"] = 2000 + 0.3 * df["re75"] + 6e-5 * df["re75"] ** 2 + TRUE_ATT * df["treat"] + noise
+    est = E.estimate_all(df).estimates
+    assert abs(est["ols"] - TRUE_ATT) > 1000
+    assert est["aipw"] == pytest.approx(TRUE_ATT, abs=400)
+
+
+def test_joint_bootstrap_shares_treated_and_keeps_group_sizes(samples):
+    sub = {k: samples[k] for k in ("experimental", "psid")}
+    boot = E.bootstrap_joint(sub, reps=3, seed=4)
+    assert set(boot["sample"]) == set(sub) and boot["rep"].nunique() == 3
+    assert len(boot) == 3 * 2 * len(E.METHODS)
+    bad = {"experimental": samples["experimental"], "cps": samples["cps"].iloc[1:]}
+    with pytest.raises(ValueError, match="treated units"):
+        E.bootstrap_joint(bad, reps=1, seed=0)
+
+
+def test_psid_weighting_balance_failure_is_reported(samples):
+    """Weighting on PSID does not balance the covariates; the results must say so."""
+    df = samples["psid"]
+    fit = E.estimate_all(df)
+    sd = E.pooled_sd(df, E.OLS_COLS)
+    assert E.smd(df, E.OLS_COLS, fit.weights, sd_ref=sd).abs().max() > 0.1
+    assert "fails its own diagnostics" in (data.ROOT / "causal" / "RESULTS.md").read_text()
 
 
 def test_bootstrap_shape_and_reproducibility(samples):
@@ -96,6 +148,12 @@ def test_bootstrap_shape_and_reproducibility(samples):
     b = E.bootstrap(samples["experimental"], reps=5, seed=1)
     assert list(a.columns) == list(E.METHODS)
     pd.testing.assert_frame_equal(a, b)
+
+
+def test_smd_fixed_denominator():
+    df = pd.DataFrame({"treat": [1, 1, 0, 0], "x": [1.0, 3.0, 0.0, 2.0]})
+    ref = pd.Series({"x": 2.0})
+    assert E.smd(df, ["x"], sd_ref=ref)["x"] == pytest.approx(0.5)
 
 
 def test_committed_estimates_reproduce_point_estimates(samples):
@@ -118,3 +176,5 @@ def test_r_crosscheck_agrees_with_python():
     assert r["ipw_cps"] == pytest.approx(est.loc[("cps", "ipw"), "estimate"], abs=1.0)
     hr = pilot["cox"]["months_0_12"]["hazard_ratio"]
     assert r["cox_hr_months_0_12_simulated"] == pytest.approx(hr, rel=1e-3)
+    ratio = pilot["cox"]["change_at_12"]["ratio_after_vs_before"]
+    assert r["cox_change_at_12_ratio_simulated"] == pytest.approx(ratio, rel=1e-3)
