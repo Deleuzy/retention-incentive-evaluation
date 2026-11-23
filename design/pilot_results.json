@@ -1,0 +1,125 @@
+{
+  "label": "SIMULATED DATA (hypothetical pilot, not real personnel data)",
+  "assumptions": {
+    "baseline_retention_12m": 0.8,
+    "target_effect_pp": 0.05,
+    "alpha": 0.05,
+    "power": 0.8,
+    "n_units": 12,
+    "tenure_bands": [
+      "0-3y",
+      "3-8y",
+      "8y+"
+    ],
+    "tenure_hazard_mult": [
+      1.6,
+      1.0,
+      0.6
+    ],
+    "tenure_shares": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "unit_hazard_sd": 0.2,
+    "icc": 0.02,
+    "bonus_dkk": 40000,
+    "followup_months": 24,
+    "post_payment_hazard_mult": 1.8,
+    "post_payment_months": [
+      13,
+      15
+    ],
+    "sample_sizes": [
+      600,
+      1000,
+      1200,
+      1600,
+      2000,
+      2400,
+      3000
+    ]
+  },
+  "n_required_for_target": 1812,
+  "n_pilot": 1900,
+  "n_treated": 948,
+  "n_strata": 36,
+  "mde_at_pilot_n_pp": 4.8874520404085855,
+  "mde_cluster_at_pilot_n_pp": 11.612654192717262,
+  "simulated_power_at_pilot_n": 0.84,
+  "power_reps": 200,
+  "truth": {
+    "baseline_monthly_hazard": 0.015922585187029537,
+    "hazard_ratio_months_1_12": 0.7264037338743492,
+    "hazard_ratio_months_13_15": 1.8,
+    "true_effect_retention_12m_pp": 5.0
+  },
+  "primary": {
+    "effect_pp": 6.191120856509215,
+    "ci_low_pp": 2.8427150255129305,
+    "ci_high_pp": 9.5395266875055,
+    "p_value": 0.00029016500726987865,
+    "retention_control": 0.7941176470588235,
+    "retention_treated": 0.8554852320675106
+  },
+  "side_effect_m13_15": {
+    "effect_pp": 3.8084029724180866,
+    "ci_low_pp": 1.2701452304426013,
+    "ci_high_pp": 6.346660714393572,
+    "p_value": 0.003274389874550995,
+    "rate_control": 0.05291005291005291,
+    "rate_treated": 0.09247842170160296
+  },
+  "retention_24m": {
+    "control": 0.6428571428571429,
+    "treated": 0.6582278481012658,
+    "diff_pp": 1.5370705244122873
+  },
+  "cox": {
+    "months_0_12": {
+      "hazard_ratio": 0.6566170384128944,
+      "ci_low": 0.5276833800927898,
+      "ci_high": 0.8170542249375111,
+      "p_value": 0.0001622679087939149,
+      "n": 1900,
+      "events": 333
+    },
+    "months_13_24": {
+      "hazard_ratio": 1.2438984310178383,
+      "ci_low": 0.9999642600638523,
+      "ci_high": 1.5473386084717053,
+      "p_value": 0.05003752304119898,
+      "n": 1567,
+      "events": 331
+    },
+    "months_0_24": {
+      "hazard_ratio": 0.903051178410681,
+      "ci_low": 0.7752122279258216,
+      "ci_high": 1.0519718361653,
+      "p_value": 0.1904001387801828,
+      "n": 1900,
+      "events": 664,
+      "ph_test_p": 0.3836073006801348
+    }
+  },
+  "survival": {
+    "km": {
+      "control": {
+        "12": 0.7941176470588241,
+        "24": 0.6428571428571431
+      },
+      "bonus": {
+        "12": 0.855485232067511,
+        "24": 0.6582278481012662
+      }
+    },
+    "logrank_p_0_24": 0.27802920720764357
+  },
+  "cost": {
+    "bonuses_paid": 811,
+    "bonus_cost_dkk": 32440000,
+    "planned_cost_per_extra_retained_dkk": 680000.0,
+    "planned_budget_dkk": 32300000.0
+  },
+  "seed": 20261201
+}

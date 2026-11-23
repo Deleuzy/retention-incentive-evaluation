@@ -1,0 +1,16 @@
+sample,method,estimate,ci_low,ci_high,boot_se,bias_vs_benchmark,ci_covers_benchmark
+experimental,diff_means,1794.34,496.63,3128.73,679.82,0.0,True
+experimental,ols,1670.71,358.33,3064.27,688.3,-123.63,True
+experimental,psm,2376.36,0.44,3570.02,930.12,582.01,True
+experimental,ipw,1785.24,485.13,3201.91,721.13,-9.1,True
+experimental,aipw,1768.03,430.51,3224.84,725.14,-26.31,True
+psid,diff_means,-15204.78,-16310.35,-13904.88,633.28,-16999.12,False
+psid,ols,4.16,-1600.32,1631.65,836.0,-1790.18,False
+psid,psm,169.55,-1595.44,3729.82,1298.61,-1624.79,True
+psid,ipw,2765.78,505.08,4224.83,971.31,971.43,True
+psid,aipw,2656.84,683.08,4191.11,916.55,862.49,True
+cps,diff_means,-8497.52,-9597.23,-7242.43,616.71,-10291.86,False
+cps,ols,1066.38,-14.41,2447.58,671.85,-727.97,True
+cps,psm,2006.25,-416.31,3649.55,992.73,211.91,True
+cps,ipw,1653.9,99.4,3261.26,834.38,-140.44,True
+cps,aipw,1478.93,-5.99,3144.42,815.49,-315.41,True

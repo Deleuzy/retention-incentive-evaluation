@@ -1,0 +1,8 @@
+{
+  "r_version": "R version 4.6.1 (2026-06-24)",
+  "benchmark": 1794.3423818501,
+  "benchmark_welch_ci": [474.0104511878, 3114.6743125124],
+  "ipw_psid": 2765.7768187439,
+  "ipw_cps": 1653.8980776304,
+  "cox_hr_months_0_12_simulated": 0.65661694658
+}

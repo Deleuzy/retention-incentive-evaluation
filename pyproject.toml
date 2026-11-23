@@ -1,0 +1,40 @@
+[project]
+name = "retention-incentive-evaluation"
+version = "0.1.0"
+description = "Impact evaluation demo: LaLonde/NSW benchmark for observational estimators, plus a pre-analysis plan for a simulated retention-bonus pilot."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.4",
+    "lifelines>=0.29",
+    "matplotlib>=3.8",
+    "markdown>=3.5",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rie"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff.lint.per-file-ignores]
+# Markdown table rows in the document templates are long by nature.
+"src/rie/report.py" = ["E501"]

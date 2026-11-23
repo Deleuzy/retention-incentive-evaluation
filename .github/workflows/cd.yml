@@ -1,0 +1,68 @@
+name: cd
+
+# On every push to main that passes CI: rerun the whole pipeline from the raw data,
+# regenerate the documents, build the site (report, plan, Danish brief, PDF of the brief)
+# and deploy it to GitHub Pages. The job summary shows whether the fresh run changed any
+# committed document.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install jsonlite
+        run: Rscript -e 'install.packages("jsonlite")'
+      - name: Rerun the pipeline
+        run: make all
+      - name: Did the fresh run change anything?
+        run: |
+          {
+            echo "### Fresh run vs committed outputs"
+            echo '```'
+            git diff --stat -- causal design brief README.md r || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Build site
+        run: make site
+      - name: PDF of the brief
+        run: |
+          google-chrome --headless --disable-gpu --no-sandbox --no-pdf-header-footer \
+            --print-to-pdf=site/brief/beslutningsoplaeg.pdf site/brief/beslutningsoplaeg.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
